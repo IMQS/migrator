@@ -1,0 +1,1 @@
+CREATE TABLE abc (id BIGSERIAL, val VARCHAR);
