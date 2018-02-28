@@ -1,8 +1,5 @@
 package main
 
-// To test:
-// vgo build && ./migrator logs postgres:localhost:5432:migtest:user:password example
-
 /*
 
 -----------------------------------------------
@@ -340,7 +337,7 @@ func runMigrations(log *log.Logger, dbStr string, sqlFiles []string) error {
 }
 
 func showHelp() {
-	fmt.Printf("migrate <logfile> <db> <path to sql files>\n")
+	fmt.Printf("migrator <logfile> <db> <path to sql files>\n")
 }
 
 func main() {
@@ -352,7 +349,7 @@ func main() {
 	db := os.Args[2]
 	sqlDir := os.Args[3]
 	logger := log.New(logfile)
-	logger.Level = log.Debug
+	//logger.Level = log.Debug
 	sqlFiles := []string{}
 	err := filepath.Walk(sqlDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
