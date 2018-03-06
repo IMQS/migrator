@@ -191,7 +191,7 @@ func getMigrationsInDB(db *sql.DB) (map[string]bool, error) {
 // This function is here to bring a fresh database up to that "160" state.
 func runLegacyMigrations(log *log.Logger, db *sql.DB, sqlFiles []string) error {
 	for _, file := range sqlFiles {
-		if legacyMigrationVersion(file) != 0 {
+		if _, isLegacy := legacyMigrationVersion(file); isLegacy {
 			if err := runMigration(log, db, file); err != nil {
 				return err
 			}
@@ -209,25 +209,25 @@ func runLegacyMigrations(log *log.Logger, db *sql.DB, sqlFiles []string) error {
 func maxLegacyMigrationVersion(sqlFiles []string) int {
 	m := 0
 	for _, file := range sqlFiles {
-		v := legacyMigrationVersion(file)
-		if v > m {
-			m = v
+		if v, isLegacy := legacyMigrationVersion(file); isLegacy {
+			if v > m {
+				m = v
+			}
 		}
 	}
 	return m
 }
 
-// Reads a migration filename, and returns the legacy migration number,
-// or zero if this is not a legacy migration
-func legacyMigrationVersion(sqlfile string) int {
+// Reads a migration filename, and interprets it as a legacy migration version
+func legacyMigrationVersion(sqlfile string) (version int, isLegacy bool) {
 	s := filepath.Base(sqlfile)
 	s = s[:len(s)-4]
 	parts := strings.Split(s, "-")
 	if len(parts) != 2 || parts[0] != "0000" || len(parts[1]) == 0 {
-		return 0
+		return 0, false
 	}
 	v, _ := strconv.ParseInt(parts[1], 10, 32)
-	return int(v)
+	return int(v), true
 }
 
 func switchoverFromAlbion(log *log.Logger, db *sql.DB, sqlFiles []string) error {
@@ -256,7 +256,7 @@ func switchoverFromAlbion(log *log.Logger, db *sql.DB, sqlFiles []string) error 
 	}
 	log.Info("Inserting legacy migrations into schema_migrations (without running them)")
 	for _, file := range sqlFiles {
-		if legacyMigrationVersion(file) != 0 {
+		if _, isLegacy := legacyMigrationVersion(file); isLegacy {
 			if _, err := tx.Exec("INSERT INTO schema_migrations (version) VALUES ($1)", migrationNameFromFile(file)); err != nil {
 				tx.Rollback()
 				return err
