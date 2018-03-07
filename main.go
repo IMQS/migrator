@@ -141,7 +141,7 @@ func connectOrCreate(log *log.Logger, con dbCon) (*sql.DB, error) {
 
 // Detect the presence of the old Albion-based migration system, and take over from that.
 // Also support initializing a fresh database.
-func bootstrap(log *log.Logger, db *sql.DB, sqlFiles []string) error {
+func bootstrap(log *log.Logger, dbName string, db *sql.DB, sqlFiles []string) error {
 	// Detect the state of this database
 	vertype := ""
 	if err := db.QueryRow("SELECT data_type FROM information_schema.columns WHERE table_name = 'schema_migrations' AND column_name = 'version'").Scan(&vertype); err != nil {
@@ -164,6 +164,8 @@ func bootstrap(log *log.Logger, db *sql.DB, sqlFiles []string) error {
 
 	// This is a legacy database, controlled by the Albion migration system.
 	// Switch over to our new system.
+	log.Infof("Switching %v over from Albion migration system", dbName)
+	fmt.Printf("Switching %v over from Albion migration system\n", dbName)
 	return switchoverFromAlbion(log, db, sqlFiles)
 }
 
@@ -231,8 +233,6 @@ func legacyMigrationVersion(sqlfile string) (version int, isLegacy bool) {
 }
 
 func switchoverFromAlbion(log *log.Logger, db *sql.DB, sqlFiles []string) error {
-	log.Infof("Switching over from Albion migration system")
-
 	// Make sure the database has been fully migrated on the Albion system, before taking control.
 	maxDB := 0
 	if err := db.QueryRow("SELECT max(version) FROM schema_migrations").Scan(&maxDB); err != nil {
@@ -312,7 +312,7 @@ func runMigrations(log *log.Logger, dbStr string, sqlFiles []string) error {
 	}
 	defer db.Close()
 
-	if err := bootstrap(log, db, sqlFiles); err != nil {
+	if err := bootstrap(log, con.dbname, db, sqlFiles); err != nil {
 		return err
 	}
 
@@ -373,8 +373,9 @@ func main() {
 	}
 	err = runMigrations(logger, db, sqlFiles)
 	if err != nil {
-		logger.Errorf("%v", err)
-		fmt.Printf("%v\n", err)
+		con, _ := parseDBConStr(db)
+		logger.Errorf("%v: %v", con.dbname, err)
+		fmt.Printf("%v: %v\n", con.dbname, err)
 		os.Exit(1)
 	}
 }
