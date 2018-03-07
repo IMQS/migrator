@@ -337,7 +337,7 @@ func runMigrations(log *log.Logger, dbStr string, sqlFiles []string) error {
 }
 
 func showHelp() {
-	fmt.Printf("migrator <logfile> <db> <path to sql files>\n")
+	fmt.Printf("migrator <logfile> <db> <path to sql files>\nversion 1.0.0\n")
 }
 
 func main() {
