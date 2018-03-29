@@ -32,16 +32,21 @@ import (
 	"database/sql"
 	"fmt"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/IMQS/log"
 	_ "github.com/lib/pq"
 )
 
 const metaTableCreateStatement = "CREATE TABLE schema_migrations (version VARCHAR PRIMARY KEY);"
+
+var validDBNameRegex = regexp.MustCompile(`^[_\-a-zA-Z0-9]+$`)
 
 type dbCon struct {
 	driver   string
@@ -336,18 +341,34 @@ func runMigrations(log *log.Logger, dbStr string, sqlFiles []string) error {
 	return nil
 }
 
-func showHelp() {
-	fmt.Printf("migrator <logfile> <db> <path to sql files>\nversion 1.0.0\n")
+// Ask the config service for a db connection string
+func getDBConnection(db string) (string, error) {
+	resp, err := http.DefaultClient.Get("http://config/config-service/dbconnection/" + db)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("%v %v", resp.StatusCode, string(body))
+	}
+	return string(body), nil
 }
 
-func main() {
-	if len(os.Args) != 4 {
-		showHelp()
-		os.Exit(1)
+func upgradeCmd(args []string) error {
+	if len(args) != 3 {
+		return fmt.Errorf("upgrade expected 3 arguments, but %v given", len(args))
 	}
-	logfile := os.Args[1]
-	db := os.Args[2]
-	sqlDir := os.Args[3]
+	logfile := args[0]
+	db := args[1]
+	sqlDir := args[2]
+	return upgrade(logfile, db, sqlDir)
+}
+
+func upgrade(logfile, db, sqlDir string) error {
 	logger := log.New(logfile)
 	//logger.Level = log.Debug
 	sqlFiles := []string{}
@@ -364,18 +385,103 @@ func main() {
 		return nil
 	})
 	if err != nil {
-		fmt.Printf("Error scanning %v: %v\n", sqlDir, err)
-		os.Exit(1)
+		return fmt.Errorf("Error scanning %v: %v", sqlDir, err)
 	}
 	if len(sqlFiles) == 0 {
-		fmt.Printf("No SQL files found in %v\n", sqlDir)
-		os.Exit(1)
+		return fmt.Errorf("No SQL files found in %v", sqlDir)
 	}
 	err = runMigrations(logger, db, sqlFiles)
 	if err != nil {
 		con, _ := parseDBConStr(db)
 		logger.Errorf("%v: %v", con.dbname, err)
-		fmt.Printf("%v: %v\n", con.dbname, err)
+		return fmt.Errorf("%v: %v", con.dbname, err)
+	}
+	return nil
+}
+
+// This only has to run in docker. On Windows, migrations are run from the shell
+// WARNING. There is no security check here. The implicit security model here is that
+// since this service is not exposed to the router, it's not exposed to the outside
+// world, so it has the same security model as the config service.
+func serviceCmd(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("service expected 1 arguments, but %v given", len(args))
+	}
+	port := args[0]
+
+	logfile := "/var/log/imqs/migrator.log"
+	migrationsRoot := "/dbschema/migrations" // This path is controlled by https://github.com/IMQS/migrations/blob/master/Dockerfile
+	logger := log.New(logfile)
+
+	http.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintf(w, `{"Timestamp": %v}`, time.Now().UTC().Unix())
+	})
+	http.HandleFunc("/upgrade", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			http.Error(w, "Must use a POST request", http.StatusBadRequest)
+			return
+		}
+		dbName := r.FormValue("db")
+		if dbName == "" {
+			http.Error(w, "Must specify 'db' as query parameter", http.StatusBadRequest)
+			return
+		}
+		if !validDBNameRegex.MatchString(dbName) {
+			http.Error(w, fmt.Sprintf("Invalid db name '%v'. Must be ASCII only", dbName), http.StatusBadRequest)
+			return
+		}
+		dbCon, err := getDBConnection(dbName)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to fetch db connection for %v: %v", dbName, err), http.StatusBadRequest)
+			return
+		}
+		migrationsDir := filepath.Join(migrationsRoot, dbName)
+		if _, err := os.Stat(migrationsDir); err != nil {
+			http.Error(w, fmt.Sprintf("No migrations found for database '%v'", dbName), http.StatusBadRequest)
+			return
+		}
+		if err := upgrade(logfile, dbCon, migrationsDir); err != nil {
+			http.Error(w, fmt.Sprintf("Upgrade of %v failed: %v", dbName, err), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintf(w, "OK")
+	})
+
+	addr := ":" + port
+	logger.Infof("Listening on %v", addr)
+	err := http.ListenAndServe(addr, nil)
+	logger.Infof("Listener exited with %v", err)
+	return err
+}
+
+func showHelp() {
+	fmt.Printf("migrator [upgrade ... | service ...]\n")
+	fmt.Printf("version 1.0.1\n")
+	fmt.Printf(" upgrade <logfile> <db> <path to sql files>  Migrate a database up to the latest version available\n")
+	fmt.Printf(" service <port>                              Run as an HTTP service, listening on <port>\n")
+}
+
+func main() {
+	if len(os.Args) < 3 {
+		showHelp()
+		os.Exit(1)
+	}
+	cmd := os.Args[1]
+	if cmd == "upgrade" {
+		if err := upgradeCmd(os.Args[2:]); err != nil {
+			fmt.Printf("%v", err)
+			os.Exit(1)
+		}
+	} else if cmd == "service" {
+		if err := serviceCmd(os.Args[2:]); err != nil {
+			fmt.Printf("%v", err)
+			os.Exit(1)
+		}
+	} else {
+		fmt.Printf("Unknown command '%v'\n", cmd)
+		showHelp()
 		os.Exit(1)
 	}
 }

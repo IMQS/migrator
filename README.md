@@ -9,12 +9,25 @@ If the database does not exist, then the migrator will create the database.
     vgo build
 (vgo must be installed. vgo needs Go 1.10)
 
-## Run
+## Run from command line
 ./migrator logfile db sqlfiles
 
 _logfile_ is the path of the log file  
 _db_ is a connection string of the form driver:host:port:database:username:password  
 _sqlfiles_ is a directory containing the SQL migration files  
+
+## Run as service
+./migrator port
+
+_port_ is the port on which the HTTP service listens.
+
+There is only one API:
+
+    POST /upgrade?db=dbname
+
+dbname is the name of the database to upgrade.
+
+When running as a service, the migrator assumes that it is running as a docker container.
 
 ## Naming Conventions of SQL Files
 The SQL migration files must follow a strict naming convention. A typical set of migration files looks like this:
