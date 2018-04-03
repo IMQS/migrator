@@ -47,6 +47,7 @@ import (
 const metaTableCreateStatement = "CREATE TABLE schema_migrations (version VARCHAR PRIMARY KEY);"
 
 var validDBNameRegex = regexp.MustCompile(`^[_\-a-zA-Z0-9]+$`)
+var validSchemaNameRegex = regexp.MustCompile(`^[_\-a-zA-Z0-9]+$`)
 
 type dbCon struct {
 	driver   string
@@ -417,16 +418,12 @@ func serviceCmd(args []string) error {
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintf(w, `{"Timestamp": %v}`, time.Now().UTC().Unix())
 	})
-	http.HandleFunc("/upgrade", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/upgrade/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			http.Error(w, "Must use a POST request", http.StatusBadRequest)
 			return
 		}
-		dbName := r.FormValue("db")
-		if dbName == "" {
-			http.Error(w, "Must specify 'db' as query parameter", http.StatusBadRequest)
-			return
-		}
+		dbName := r.URL.Path[9:]
 		if !validDBNameRegex.MatchString(dbName) {
 			http.Error(w, fmt.Sprintf("Invalid db name '%v'. Must be ASCII only", dbName), http.StatusBadRequest)
 			return
@@ -448,6 +445,16 @@ func serviceCmd(args []string) error {
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintf(w, "OK")
 	})
+	http.HandleFunc("/schema/", func(w http.ResponseWriter, r *http.Request) {
+		// Read a schema file
+		filename := r.URL.Path[8:]
+		if !validSchemaNameRegex.MatchString(filename) {
+			http.Error(w, "Invalid request. Must be just the schema name, eg 'main', or 'mirror'", http.StatusBadRequest)
+			return
+		}
+		filename = filepath.Join("/dbschema/schema", filename) + ".schema"
+		http.ServeFile(w, r, filename)
+	})
 
 	addr := ":" + port
 	logger.Infof("Listening on %v", addr)
@@ -460,7 +467,7 @@ func showHelp() {
 	fmt.Printf("migrator [upgrade ... | service ...]\n")
 	fmt.Printf("version 1.0.1\n")
 	fmt.Printf(" upgrade <logfile> <db> <path to sql files>  Migrate a database up to the latest version available\n")
-	fmt.Printf(" service <port>                              Run as an HTTP service, listening on <port>\n")
+	fmt.Printf(" serve <port>                                Run as an HTTP service, listening on <port>\n")
 }
 
 func main() {
@@ -474,7 +481,7 @@ func main() {
 			fmt.Printf("%v", err)
 			os.Exit(1)
 		}
-	} else if cmd == "service" {
+	} else if cmd == "serve" {
 		if err := serviceCmd(os.Args[2:]); err != nil {
 			fmt.Printf("%v", err)
 			os.Exit(1)
