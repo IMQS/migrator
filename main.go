@@ -45,6 +45,7 @@ import (
 )
 
 const metaTableCreateStatement = "CREATE TABLE schema_migrations (version VARCHAR PRIMARY KEY);"
+const migrationsRoot = "/dbschema/migrations" // This path is controlled by https://github.com/IMQS/migrations/blob/master/Dockerfile
 
 var validDBNameRegex = regexp.MustCompile(`^[_\-a-zA-Z0-9]+$`)
 var validSchemaNameRegex = regexp.MustCompile(`^[_\-a-zA-Z0-9]+$`)
@@ -400,6 +401,28 @@ func upgrade(logfile, db, sqlDir string) error {
 	return nil
 }
 
+func upgradeAll(logfile string) error {
+	//iterate over the folders in the migration root
+	files, err := ioutil.ReadDir(migrationsRoot)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if f.IsDir() {
+			conn, err := getDBConnection(f.Name())
+			if err != nil {
+				return err
+			}
+			migrationsDir := filepath.Join(migrationsRoot, f.Name())
+			if err := upgrade(logfile, conn, migrationsDir); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+
 // This only has to run in docker. On Windows, migrations are run from the shell
 // WARNING. There is no security check here. The implicit security model here is that
 // since this service is not exposed to the router, it's not exposed to the outside
@@ -409,10 +432,14 @@ func serviceCmd(args []string) error {
 		return fmt.Errorf("service expected 1 arguments, but %v given", len(args))
 	}
 	port := args[0]
-
 	logfile := "/var/log/imqs/migrator.log"
-	migrationsRoot := "/dbschema/migrations" // This path is controlled by https://github.com/IMQS/migrations/blob/master/Dockerfile
 	logger := log.New(logfile)
+
+	err := upgradeAll(logfile)
+	if err != nil {
+		logger.Errorf("Failed to upgrade DBs on startup: %v", err)
+		return err
+	}
 
 	http.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -458,7 +485,7 @@ func serviceCmd(args []string) error {
 
 	addr := ":" + port
 	logger.Infof("Listening on %v", addr)
-	err := http.ListenAndServe(addr, nil)
+	err = http.ListenAndServe(addr, nil)
 	logger.Infof("Listener exited with %v", err)
 	return err
 }

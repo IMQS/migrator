@@ -13,5 +13,5 @@ RUN CGO_ENABLED=0 GOOS=linux vgo build
 
 FROM imqs/ubuntu-base
 COPY --from=0 /build/migrator /opt/migrator
-ENTRYPOINT ["/opt/migrator"]
+ENTRYPOINT ["wait-for-nc.sh", "config:80", "--", "wait-for-postgres.sh", "db", "/opt/migrator"]
 CMD ["serve", "80"]
