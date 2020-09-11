@@ -4,12 +4,14 @@
 # The migrations docker build just copies our binary "migrator" out of this container,
 # and into it's own container.
 
-FROM golang:1.10
+FROM golang:1.15
+
 WORKDIR /build
-RUN go get -u golang.org/x/vgo
-COPY go.mod /build
-COPY main.go /build
-RUN CGO_ENABLED=0 GOOS=linux vgo build
+COPY go.mod go.sum /build/
+RUN go mod download
+
+COPY . /build
+RUN go build
 
 FROM imqs/ubuntu-base
 COPY --from=0 /build/migrator /opt/migrator

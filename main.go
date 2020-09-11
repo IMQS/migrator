@@ -371,7 +371,7 @@ func upgradeCmd(args []string) error {
 }
 
 func upgrade(logfile, db, sqlDir string) error {
-	logger := log.New(logfile)
+	logger := log.New(logfile, true)
 	//logger.Level = log.Debug
 	sqlFiles := []string{}
 	err := filepath.Walk(sqlDir, func(path string, info os.FileInfo, err error) error {
@@ -433,7 +433,7 @@ func serviceCmd(args []string) error {
 	}
 	port := args[0]
 	logfile := "/var/log/imqs/migrator.log"
-	logger := log.New(logfile)
+	logger := log.New(logfile, true)
 
 	err := upgradeAll(logfile)
 	if err != nil {

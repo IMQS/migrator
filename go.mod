@@ -1,6 +1,8 @@
 module "github.com/IMQS/migrator"
 
+go 1.15
+
 require (
-	"github.com/IMQS/log" v0.0.0-20180227140833-7478bb7c7040
-	"github.com/lib/pq" v0.0.0-20180201184707-88edab080323
+	"github.com/IMQS/log" v1.0.2
+	"github.com/lib/pq" v1.3.0
 )
