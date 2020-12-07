@@ -315,6 +315,7 @@ func runMigration(log *log.Logger, db *sql.DB, sqlFile string) error {
 }
 
 func runMigrations(log *log.Logger, dbStr string, sqlFiles []string) error {
+	log.Infof("runMigrations db string: %v", dbStr)
 	con, err := parseDBConStr(dbStr)
 	if err != nil {
 		return err
@@ -401,6 +402,7 @@ func upgrade(logfile, db, sqlDir string) error {
 	}
 	err = runMigrations(logger, db, sqlFiles)
 	if err != nil {
+		logger.Infof("upgrade: db string: %v", db)
 		con, _ := parseDBConStr(db)
 		logger.Errorf("%v: %v", con.dbname, err)
 		return fmt.Errorf("%v: %v", con.dbname, err)
