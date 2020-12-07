@@ -85,7 +85,7 @@ func (c *dbCon) string() string {
 // Returns driver, con, error
 func parseDBConStr(dbStr string) (dbCon, error) {
 	parts := strings.Split(dbStr, ":")
-	if len(parts) != 6 {
+	if len(parts) != 7 {
 		return dbCon{}, fmt.Errorf("Invalid db connection string. Expected 6 colon-separated parts, but only got %v parts", len(parts))
 	}
 	c := dbCon{
@@ -95,6 +95,7 @@ func parseDBConStr(dbStr string) (dbCon, error) {
 		dbname:   parts[3],
 		user:     parts[4],
 		password: parts[5],
+		sslmode:  parts[6],
 	}
 	if c.driver != "postgres" {
 		return c, fmt.Errorf("Postgres is the only supported database (not %v)", c.driver)
@@ -421,7 +422,6 @@ func upgradeAll(logfile string) error {
 	}
 	return nil
 }
-
 
 // This only has to run in docker. On Windows, migrations are run from the shell
 // WARNING. There is no security check here. The implicit security model here is that
