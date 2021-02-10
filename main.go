@@ -30,6 +30,7 @@ vgo build && ./migrator logs postgres:localhost:0:newdb:unit_test_user:unit_test
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -51,25 +52,27 @@ var validDBNameRegex = regexp.MustCompile(`^[_\-a-zA-Z0-9]+$`)
 var validSchemaNameRegex = regexp.MustCompile(`^[_\-a-zA-Z0-9]+$`)
 
 type dbCon struct {
-	driver   string
-	host     string
-	port     string
-	dbname   string
-	user     string
-	password string
-	sslmode  string
+	Driver   string `json:"driver"`
+	Host     string `json:"host"`
+	Port     string `json:"port"`
+	Name     string `json:"name"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	ModTrack string `json:"modtrack"`
+	Alias    string `json:"alias,omitempty"`
+	SSLMode  string `json:"sslmode,omitempty"`
 }
 
 func (c *dbCon) makeConStr() string {
-	s := fmt.Sprintf("host=%v dbname=%v user=%v", c.host, c.dbname, c.user)
-	if c.port != "0" && c.port != "" {
-		s += fmt.Sprintf(" port=%v", c.port)
+	s := fmt.Sprintf("host=%v dbname=%v user=%v", c.Host, c.Name, c.Username)
+	if c.Port != "0" && c.Port != "" {
+		s += fmt.Sprintf(" port=%v", c.Port)
 	}
-	if c.password != "" {
-		s += fmt.Sprintf(" password=%v", c.password)
+	if c.Password != "" {
+		s += fmt.Sprintf(" password=%v", c.Password)
 	}
-	if c.sslmode != "" {
-		s += fmt.Sprintf(" sslmode=%v", c.sslmode)
+	if c.SSLMode != "" && c.SSLMode != "allow" { // allow is not an accepted value for sslmode
+		s += fmt.Sprintf(" sslmode=%v", c.SSLMode)
 	} else {
 		s += " sslmode=disable"
 	}
@@ -77,50 +80,53 @@ func (c *dbCon) makeConStr() string {
 }
 
 func (c *dbCon) string() string {
-	return c.host + ":" + c.dbname
+	return c.Host + ":" + c.Name
 }
 
 // postgres:hostname:port:dbname:username:password
 // port and password may be blank, in which case they are omitted from the connection string
 // Returns driver, con, error
-func parseDBConStr(dbStr string) (dbCon, error) {
+func parseDBConStr(dbStr string) (*dbCon, error) {
 	parts := strings.Split(dbStr, ":")
-	if len(parts) != 7 {
-		return dbCon{}, fmt.Errorf("Invalid db connection string. Expected 6 colon-separated parts, but only got %v parts", len(parts))
+	if len(parts) < 6 {
+		return nil, fmt.Errorf("Invalid db connection string. Expected at least 6 colon-separated parts, but only got %v parts", len(parts))
 	}
-	c := dbCon{
-		driver:   parts[0],
-		host:     parts[1],
-		port:     parts[2],
-		dbname:   parts[3],
-		user:     parts[4],
-		password: parts[5],
-		sslmode:  parts[6],
+	c := &dbCon{
+		Driver:   parts[0],
+		Host:     parts[1],
+		Port:     parts[2],
+		Name:     parts[3],
+		Username: parts[4],
+		Password: parts[5],
 	}
-	if c.driver != "postgres" {
-		return c, fmt.Errorf("Postgres is the only supported database (not %v)", c.driver)
+	if c.Driver != "postgres" {
+		return c, fmt.Errorf("Postgres is the only supported database (not %v)", c.Driver)
 	}
+	if len(parts) > 6 {
+		c.SSLMode = parts[len(parts)-1]
+	}
+
 	return c, nil
 }
 
-func connectOrCreate(log *log.Logger, con dbCon) (*sql.DB, error) {
-	db, err := sql.Open(con.driver, con.makeConStr())
+func connectOrCreate(log *log.Logger, con *dbCon) (*sql.DB, error) {
+	db, err := sql.Open(con.Driver, con.makeConStr())
 	if err == nil {
 		// Try a dummy query, to kick the driver into action
 		if _, err := db.Exec("SELECT 1"); err == nil {
-			log.Debugf("Connected to database %v", con.dbname)
+			log.Debugf("Connected to database %v", con.Name)
 			return db, nil
 		}
 	}
 
-	root := con
-	root.dbname = "postgres"
-	db, err = sql.Open(root.driver, root.makeConStr())
+	root := *con
+	root.Name = "postgres"
+	db, err = sql.Open(root.Driver, root.makeConStr())
 	if err != nil {
 		return nil, fmt.Errorf("Failed to connect to database '%v', in order to create database %v: %v", root.string(), con.string(), err)
 	}
-	log.Infof("Creating database %v", con.dbname)
-	_, err = db.Exec(fmt.Sprintf("CREATE DATABASE %v", con.dbname))
+	log.Infof("Creating database %v", con.Name)
+	_, err = db.Exec(fmt.Sprintf("CREATE DATABASE %v", con.Name))
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("Failed to create database %v: %v", con.string(), err)
@@ -128,7 +134,7 @@ func connectOrCreate(log *log.Logger, con dbCon) (*sql.DB, error) {
 
 	// disconnect from "postgres", and connect to our new DB
 	db.Close()
-	db, err = sql.Open(con.driver, con.makeConStr())
+	db, err = sql.Open(con.Driver, con.makeConStr())
 	if err != nil {
 		return nil, fmt.Errorf("Failed to connect to newly created database '%v': %v", con.string(), err)
 	}
@@ -308,19 +314,14 @@ func runMigration(log *log.Logger, db *sql.DB, sqlFile string) error {
 	return tx.Commit()
 }
 
-func runMigrations(log *log.Logger, dbStr string, sqlFiles []string) error {
-	con, err := parseDBConStr(dbStr)
-	if err != nil {
-		return err
-	}
-
+func runMigrations(log *log.Logger, con *dbCon, sqlFiles []string) error {
 	db, err := connectOrCreate(log, con)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
-	if err := bootstrap(log, con.dbname, db, sqlFiles); err != nil {
+	if err := bootstrap(log, con.Name, db, sqlFiles); err != nil {
 		return err
 	}
 
@@ -345,20 +346,26 @@ func runMigrations(log *log.Logger, dbStr string, sqlFiles []string) error {
 }
 
 // Ask the config service for a db connection string
-func getDBConnection(db string) (string, error) {
-	resp, err := http.DefaultClient.Get("http://config/config-service/dbconnection/" + db)
+func getDBConnection(db string) (*dbCon, error) {
+	resp, err := http.DefaultClient.Get("http://config/config-service/dbconnection/" + db + "?format=json")
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("%v %v", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("%v %v", resp.StatusCode, string(body))
 	}
-	return string(body), nil
+
+	var con dbCon
+	if err := json.Unmarshal(body, &con); err != nil {
+		return nil, fmt.Errorf("While marshalling the response from config service to get the db connection details: %v", err)
+	}
+
+	return &con, nil
 }
 
 func upgradeCmd(args []string) error {
@@ -366,12 +373,15 @@ func upgradeCmd(args []string) error {
 		return fmt.Errorf("upgrade expected 3 arguments, but %v given", len(args))
 	}
 	logfile := args[0]
-	db := args[1]
+	con, err := parseDBConStr(args[1])
+	if err != nil {
+		return fmt.Errorf("While parsing the connection string: %v", err)
+	}
 	sqlDir := args[2]
-	return upgrade(logfile, db, sqlDir)
+	return upgrade(logfile, con, sqlDir)
 }
 
-func upgrade(logfile, db, sqlDir string) error {
+func upgrade(logfile string, con *dbCon, sqlDir string) error {
 	logger := log.New(logfile, true)
 	//logger.Level = log.Debug
 	sqlFiles := []string{}
@@ -393,11 +403,10 @@ func upgrade(logfile, db, sqlDir string) error {
 	if len(sqlFiles) == 0 {
 		return fmt.Errorf("No SQL files found in %v", sqlDir)
 	}
-	err = runMigrations(logger, db, sqlFiles)
+	err = runMigrations(logger, con, sqlFiles)
 	if err != nil {
-		con, _ := parseDBConStr(db)
-		logger.Errorf("%v: %v", con.dbname, err)
-		return fmt.Errorf("%v: %v", con.dbname, err)
+		logger.Errorf("%v: %v", con.Name, err)
+		return fmt.Errorf("%v: %v", con.Name, err)
 	}
 	return nil
 }
