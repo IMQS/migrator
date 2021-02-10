@@ -88,7 +88,7 @@ func (c *dbCon) string() string {
 // Returns driver, con, error
 func parseDBConStr(dbStr string) (*dbCon, error) {
 	parts := strings.Split(dbStr, ":")
-	if len(parts) > 5 {
+	if len(parts) < 6 {
 		return nil, fmt.Errorf("Invalid db connection string. Expected at least 6 colon-separated parts, but only got %v parts", len(parts))
 	}
 	c := &dbCon{
