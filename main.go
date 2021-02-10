@@ -362,7 +362,7 @@ func getDBConnection(db string) (*dbCon, error) {
 
 	var con dbCon
 	if err := json.Unmarshal(body, &con); err != nil {
-		return nil, fmt.Errorf("while marshalling the response from config service to get the db connection details: %v", err)
+		return nil, fmt.Errorf("While marshalling the response from config service to get the db connection details: %v", err)
 	}
 
 	return &con, nil
@@ -375,7 +375,7 @@ func upgradeCmd(args []string) error {
 	logfile := args[0]
 	con, err := parseDBConStr(args[1])
 	if err != nil {
-		return fmt.Errorf("while parsing the connection string: %v", err)
+		return fmt.Errorf("While parsing the connection string: %v", err)
 	}
 	sqlDir := args[2]
 	return upgrade(logfile, con, sqlDir)
