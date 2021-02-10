@@ -1,3 +1,5 @@
+# docker build -t imqs/migrator:master .
+
 # NOTE!
 # This is never intended to be run as a container. It's meaningful output is a named
 # container (imqs/migrator), which is used by the docker build of imqs/migrations.
