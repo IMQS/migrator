@@ -1,4 +1,4 @@
-# docker build -t imqs/migrator:master .
+# docker build -t imqs/migrator:latest .
 
 # NOTE!
 # This is never intended to be run as a container. It's meaningful output is a named
@@ -15,7 +15,11 @@ RUN go mod download
 COPY . /build
 RUN go build
 
-FROM imqs/ubuntu-base
+FROM imqs/ubuntu-base:20.04
+
 COPY --from=0 /build/migrator /opt/migrator
+
+HEALTHCHECK CMD curl --fail http://localhost/ping || exit 1
+
 ENTRYPOINT ["wait-for-nc.sh", "config:80", "--", "wait-for-postgres.sh", "db", "/opt/migrator"]
 CMD ["serve", "80"]

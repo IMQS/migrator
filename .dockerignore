@@ -1,0 +1,11 @@
+.github
+.vscode
+
+example-legacydb
+example-newdb
+
+.gitignore
+Dockerfile
+README.md
+logs
+migrator

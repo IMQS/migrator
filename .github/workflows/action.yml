@@ -32,4 +32,4 @@ jobs:
           password: ${{ secrets.DEPLOY_DOCKER_PASSWORD }}
           repository: imqs/migrator
           tag_with_ref: true
-          cache_froms: golang:1.15, imqs/ubuntu-base
+          cache_froms: golang:1.15, imqs/ubuntu-base:20.04
