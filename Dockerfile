@@ -15,7 +15,7 @@ RUN go mod download
 COPY . /build
 RUN go build
 
-FROM imqs/ubuntu-base:20.04
+FROM imqs/ubuntu-base:24.04
 
 COPY --from=0 /build/migrator /opt/migrator
 
