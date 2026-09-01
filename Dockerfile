@@ -6,7 +6,7 @@
 # The migrations docker build just copies our binary "migrator" out of this container,
 # and into it's own container.
 
-FROM golang:1.15
+FROM golang:1.22.7
 
 WORKDIR /build
 COPY go.mod go.sum /build/
