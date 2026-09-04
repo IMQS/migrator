@@ -30,9 +30,7 @@ vgo build && ./migrator logs postgres:localhost:0:newdb:unit_test_user:unit_test
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -42,6 +40,8 @@ import (
 	"time"
 
 	"github.com/IMQS/log"
+	serviceconfig "github.com/IMQS/serviceconfigsgo"
+
 	_ "github.com/lib/pq"
 )
 
@@ -51,47 +51,19 @@ const migrationsRoot = "/dbschema/migrations" // This path is controlled by http
 var validDBNameRegex = regexp.MustCompile(`^[_\-a-zA-Z0-9]+$`)
 var validSchemaNameRegex = regexp.MustCompile(`^[_\-a-zA-Z0-9]+$`)
 
-type dbCon struct {
-	Driver   string `json:"driver"`
-	Host     string `json:"host"`
-	Port     string `json:"port"`
-	Name     string `json:"name"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	ModTrack string `json:"modtrack"`
-	Alias    string `json:"alias,omitempty"`
-	SSLMode  string `json:"sslmode,omitempty"`
-}
-
-func (c *dbCon) makeConStr() string {
-	s := fmt.Sprintf("host=%v dbname=%v user=%v", c.Host, c.Name, c.Username)
-	if c.Port != "0" && c.Port != "" {
-		s += fmt.Sprintf(" port=%v", c.Port)
-	}
-	if c.Password != "" {
-		s += fmt.Sprintf(" password=%v", c.Password)
-	}
-	if c.SSLMode != "" && c.SSLMode != "allow" { // allow is not an accepted value for sslmode
-		s += fmt.Sprintf(" sslmode=%v", c.SSLMode)
-	} else {
-		s += " sslmode=disable"
-	}
-	return s
-}
-
-func (c *dbCon) string() string {
+func dbLogString(c *serviceconfig.DBConfig) string {
 	return c.Host + ":" + c.Name
 }
 
 // postgres:hostname:port:dbname:username:password
 // port and password may be blank, in which case they are omitted from the connection string
 // Returns driver, con, error
-func parseDBConStr(dbStr string) (*dbCon, error) {
+func parseDBConStr(dbStr string) (*serviceconfig.DBConfig, error) {
 	parts := strings.Split(dbStr, ":")
 	if len(parts) < 6 {
 		return nil, fmt.Errorf("Invalid db connection string. Expected at least 6 colon-separated parts, but only got %v parts", len(parts))
 	}
-	c := &dbCon{
+	c := &serviceconfig.DBConfig{
 		Driver:   parts[0],
 		Host:     parts[1],
 		Port:     parts[2],
@@ -109,8 +81,8 @@ func parseDBConStr(dbStr string) (*dbCon, error) {
 	return c, nil
 }
 
-func connectOrCreate(log *log.Logger, con *dbCon) (*sql.DB, error) {
-	db, err := sql.Open(con.Driver, con.makeConStr())
+func connectOrCreate(log *log.Logger, con *serviceconfig.DBConfig) (*sql.DB, error) {
+	db, err := sql.Open(con.Driver, con.DSN())
 	if err == nil {
 		// Try a dummy query, to kick the driver into action
 		if _, err := db.Exec("SELECT 1"); err == nil {
@@ -121,32 +93,32 @@ func connectOrCreate(log *log.Logger, con *dbCon) (*sql.DB, error) {
 
 	root := *con
 	root.Name = "postgres"
-	db, err = sql.Open(root.Driver, root.makeConStr())
+	db, err = sql.Open(root.Driver, root.DSN())
 	if err != nil {
-		return nil, fmt.Errorf("Failed to connect to database '%v', in order to create database %v: %v", root.string(), con.string(), err)
+		return nil, fmt.Errorf("Failed to connect to database '%v', in order to create database %v: %v", dbLogString(&root), dbLogString(con), err)
 	}
 	log.Infof("Creating database %v", con.Name)
 	_, err = db.Exec(fmt.Sprintf("CREATE DATABASE %v", con.Name))
 	if err != nil {
 		db.Close()
-		return nil, fmt.Errorf("Failed to create database %v: %v", con.string(), err)
+		return nil, fmt.Errorf("Failed to create database %v: %v", dbLogString(con), err)
 	}
 
 	// disconnect from "postgres", and connect to our new DB
 	db.Close()
-	db, err = sql.Open(con.Driver, con.makeConStr())
+	db, err = sql.Open(con.Driver, con.DSN())
 	if err != nil {
-		return nil, fmt.Errorf("Failed to connect to newly created database '%v': %v", con.string(), err)
+		return nil, fmt.Errorf("Failed to connect to newly created database '%v': %v", dbLogString(con), err)
 	}
 	/*
 		// >>> Let's rather do this with a migration
 		// Installing PostGIS doesn't need to be part of this initialization. It could be performed by
 		// a migration. But for what this thing was built for, it's convenient to do it here.
-		log.Infof("Installing PostGIS in database %v", con.dbname)
+		log.Infof("Installing PostGIS in database %v", con.Name)
 		_, err = db.Exec("CREATE EXTENSION postgis")
 		if err != nil {
 			db.Close()
-			return nil, fmt.Errorf("Failed to install postgis into %v: %v", con.string(), err)
+			return nil, fmt.Errorf("Failed to install postgis into %v: %v", dbLogString(con), err)
 		}
 	*/
 
@@ -292,7 +264,7 @@ func migrationNameFromFile(filename string) string {
 }
 
 func runMigration(log *log.Logger, db *sql.DB, sqlFile string) error {
-	sql, err := ioutil.ReadFile(sqlFile)
+	sql, err := os.ReadFile(sqlFile)
 	if err != nil {
 		return fmt.Errorf("Error reading migration file %v: %v", sqlFile, err)
 	}
@@ -314,7 +286,7 @@ func runMigration(log *log.Logger, db *sql.DB, sqlFile string) error {
 	return tx.Commit()
 }
 
-func runMigrations(log *log.Logger, con *dbCon, sqlFiles []string) error {
+func runMigrations(log *log.Logger, con *serviceconfig.DBConfig, sqlFiles []string) error {
 	db, err := connectOrCreate(log, con)
 	if err != nil {
 		return err
@@ -345,29 +317,6 @@ func runMigrations(log *log.Logger, con *dbCon, sqlFiles []string) error {
 	return nil
 }
 
-// Ask the config service for a db connection string
-func getDBConnection(db string) (*dbCon, error) {
-	resp, err := http.DefaultClient.Get("http://config/config-service/dbconnection/" + db + "?format=json")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("%v %v", resp.StatusCode, string(body))
-	}
-
-	var con dbCon
-	if err := json.Unmarshal(body, &con); err != nil {
-		return nil, fmt.Errorf("While marshalling the response from config service to get the db connection details: %v", err)
-	}
-
-	return &con, nil
-}
-
 func upgradeCmd(args []string) error {
 	if len(args) != 3 {
 		return fmt.Errorf("upgrade expected 3 arguments, but %v given", len(args))
@@ -381,7 +330,7 @@ func upgradeCmd(args []string) error {
 	return upgrade(logfile, con, sqlDir)
 }
 
-func upgrade(logfile string, con *dbCon, sqlDir string) error {
+func upgrade(logfile string, con *serviceconfig.DBConfig, sqlDir string) error {
 	logger := log.New(logfile, true)
 	//logger.Level = log.Debug
 	sqlFiles := []string{}
@@ -413,13 +362,13 @@ func upgrade(logfile string, con *dbCon, sqlDir string) error {
 
 func upgradeAll(logfile string) error {
 	//iterate over the folders in the migration root
-	files, err := ioutil.ReadDir(migrationsRoot)
+	files, err := os.ReadDir(migrationsRoot)
 	if err != nil {
 		return err
 	}
 	for _, f := range files {
 		if f.IsDir() {
-			conn, err := getDBConnection(f.Name())
+			conn, err := serviceconfig.GetDBAlias(f.Name(), false)
 			if err != nil {
 				return err
 			}
@@ -433,9 +382,9 @@ func upgradeAll(logfile string) error {
 }
 
 // This only has to run in docker. On Windows, migrations are run from the shell
-// WARNING. There is no security check here. The implicit security model here is that
-// since this service is not exposed to the router, it's not exposed to the outside
-// world, so it has the same security model as the config service.
+// WARNING. There is no security check here. The implicit security model here is
+// that since this service is not exposed to the router, it's not exposed to the
+// outside world, so it has the same security model as the config service.
 func serviceCmd(args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("service expected 1 arguments, but %v given", len(args))
@@ -464,7 +413,7 @@ func serviceCmd(args []string) error {
 			http.Error(w, fmt.Sprintf("Invalid db name '%v'. Must be ASCII only", dbName), http.StatusBadRequest)
 			return
 		}
-		dbCon, err := getDBConnection(dbName)
+		dbCon, err := serviceconfig.GetDBAlias(dbName, false)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to fetch db connection for %v: %v", dbName, err), http.StatusBadRequest)
 			return
